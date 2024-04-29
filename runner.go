@@ -27,7 +27,8 @@ const (
 )
 
 type runner struct {
-	state string
+	state    string
+	safeMode bool // safeMode is used to prevent panics from Task.Fn crashing boomer
 
 	tasks           []*Task
 	totalTaskWeight int
@@ -60,10 +61,17 @@ func (r *runner) setLogger(logger *log.Logger) {
 	}
 }
 
-// safeRun runs fn and recovers from unexpected panics.
-// it prevents panics from Task.Fn crashing boomer.
-func (r *runner) safeRun(fn func()) {
+func (r *runner) setSafeMode(safeMode bool) {
+	r.safeMode = safeMode
+}
+
+// If safeMode is enabled, it recovers from unexpected panics
+// and prevents panics from Task.Fn crashing boomer.
+func (r *runner) run(fn func()) {
 	defer func() {
+		if !r.safeMode {
+			return
+		}
 		// don't panic
 		err := recover()
 		if err != nil {
@@ -151,7 +159,7 @@ func (r *runner) addWorkers(gapCount int) {
 							blocked := r.rateLimiter.Acquire()
 							if !blocked {
 								task := r.getTask(index)
-								r.safeRun(task.Fn)
+								r.run(task.Fn)
 								index++
 								if index == r.totalTaskWeight {
 									index = 0
@@ -159,7 +167,7 @@ func (r *runner) addWorkers(gapCount int) {
 							}
 						} else {
 							task := r.getTask(index)
-							r.safeRun(task.Fn)
+							r.run(task.Fn)
 							index++
 							if index == r.totalTaskWeight {
 								index = 0
@@ -267,6 +275,7 @@ type localRunner struct {
 
 func newLocalRunner(tasks []*Task, rateLimiter RateLimiter, spawnCount int, spawnRate float64) (r *localRunner) {
 	r = &localRunner{}
+	r.safeMode = true // By default, safeMode is enabled.
 	r.setLogger(log.Default())
 	r.setTasks(tasks)
 	r.spawnRate = spawnRate
@@ -345,6 +354,7 @@ type slaveRunner struct {
 
 func newSlaveRunner(masterHost string, masterPort int, tasks []*Task, rateLimiter RateLimiter) (r *slaveRunner) {
 	r = &slaveRunner{}
+	r.safeMode = true // By default, safeMode is enabled.
 	r.setLogger(log.Default())
 	r.masterHost = masterHost
 	r.masterPort = masterPort
